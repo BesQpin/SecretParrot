@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ops
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secret-parrot
+  namespace: ops
+  annotations:
+    # For Azure AD Workload Identity
+    azure.workload.identity/client-id: "<managed-identity-client-id>"
+    azure.workload.identity/use: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secret-parrot
+  namespace: ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: secret-parrot }
+  template:
+    metadata:
+      labels: { app: secret-parrot }
+      annotations:
+        # Required for Workload Identity mutating webhook
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: secret-parrot
+      containers:
+        - name: secret-parrot
+          image: ghcr.io/your-org/secret-parrot:0.1.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: secret-parrot-config
+          # Example explicit args (override env)
+          args:
+            - "--concurrency=24"
+            - "--latest-only=true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1
+              memory: 512Mi
