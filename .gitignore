@@ -1,0 +1,27 @@
+# Binaries
+secret-parrot
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build directories
+/bin/
+/obj/
+
+# Go modules
+/vendor/
+/go.sum
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.tar
+*.log
+
+# Environment files
+.env
