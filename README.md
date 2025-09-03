@@ -3,7 +3,7 @@
 <img src="SecretParrot.png" alt="alt text" style="width:25%;"/>
 
 **Secret Parrot** is a Go application that copies secrets from one Azure Key Vault to multiple target Key Vaults.  
-It supports managed identity authentication and is designed to run in Kubernetes or any containerized environment.
+It supports multiple authentication methods including managed identity, Azure CLI credentials, and interactive browser login.
 
 ## Features
 
@@ -12,7 +12,11 @@ It supports managed identity authentication and is designed to run in Kubernetes
 - Include/exclude specific secrets via glob patterns
 - Dry-run mode for testing
 - Concurrent copying with configurable concurrency
-- Support for managed identities
+- Flexible authentication options:
+  - Managed identity (for containerized environments)
+  - Environment credentials
+  - Azure CLI credentials (for local development)
+  - Interactive browser login (fallback)
 
 ## Installation
 
@@ -32,18 +36,41 @@ docker build -t secret-parrot:latest .
 
 ## Usage
 
+### Local Development
+
+When running locally, Secret Parrot will automatically use your Azure CLI credentials if you're already logged in:
+
 ```bash
+# Using existing Azure CLI credentials
+az login  # if not already logged in
 ./secret-parrot \
   --source-vault <source-vault-name> \
-  --target-vaults <comma-separated-target-vaults> \
-  [--include <glob>] \
-  [--exclude <glob>] \
-  [--latest-only] \
-  [--dry-run] \
-  [--concurrency <number>]
+  --target-vaults <comma-separated-target-vaults>
 ```
 
-### Flags
+If no Azure CLI credentials are found, it will fall back to interactive browser login unless disabled:
+
+```bash
+# Disable browser-based authentication
+NO_BROWSER_AUTH=true ./secret-parrot \
+  --source-vault <source-vault-name> \
+  --target-vaults <comma-separated-target-vaults>
+```
+
+### Container Environment
+
+When running in a container, use environment variables for authentication:
+
+```bash
+docker run secret-parrot:latest \
+  -e AZURE_TENANT_ID=<tenant-id> \
+  -e AZURE_CLIENT_ID=<client-id> \
+  -e AZURE_CLIENT_SECRET=<client-secret> \
+  --source-vault <source-vault-name> \
+  --target-vaults <target1,target2>
+```
+
+### Common Flags
 
 | Flag | Description |
 |------|-------------|
@@ -54,6 +81,24 @@ docker build -t secret-parrot:latest .
 | `--latest-only` | Copy only the latest version of each secret |
 | `--dry-run` | Print actions without modifying target Key Vaults |
 | `--concurrency` | Number of concurrent secret copy operations (default: 8) |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_TENANT_ID` | Azure tenant ID (optional for CLI auth) |
+| `AZURE_CLIENT_ID` | Service principal client ID |
+| `AZURE_CLIENT_SECRET` | Service principal client secret |
+| `NO_BROWSER_AUTH` | Set to "true" to disable interactive browser login |
+| `DEBUG` | Set to "true" for debug logging |
+
+## Authentication Flow
+
+Secret Parrot attempts authentication methods in the following order:
+
+1. Environment credentials (using `AZURE_*` environment variables)
+2. Azure CLI credentials (if running locally and logged in)
+3. Interactive browser login (unless disabled with `NO_BROWSER_AUTH=true`)
 
 ## Kubernetes Deployment
 
@@ -98,6 +143,8 @@ spec:
             secretKeyRef:
               name: azure-credentials
               key: clientSecret
+        - name: NO_BROWSER_AUTH
+          value: "true"
 ```
 
 ## License
