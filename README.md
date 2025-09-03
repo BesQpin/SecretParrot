@@ -1,5 +1,7 @@
 # Secret Parrot
 
+<img src="SecretParrot.png" alt="alt text" style="width:25%;"/>
+
 **Secret Parrot** is a Go application that copies secrets from one Azure Key Vault to multiple target Key Vaults.  
 It supports managed identity authentication and is designed to run in Kubernetes or any containerized environment.
 
