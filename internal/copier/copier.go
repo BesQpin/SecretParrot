@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 	"github.com/your-org/secret-parrot/internal/kv"
 )
@@ -18,7 +20,7 @@ type Logger interface {
 }
 
 type Copier struct {
-	Credential       azsecrets.TokenCredential
+	Credential       azcore.TokenCredential
 	SourceVaultName  string
 	TargetVaultNames []string
 	Include          string
@@ -55,7 +57,7 @@ func (c *Copier) Run(ctx context.Context) error {
 	inc := splitList(c.Include)
 	exc := splitList(c.Exclude)
 
-	pager := srcClient.NewListSecretsPager(nil)
+	pager := srcClient.NewListSecretPropertiesPager(nil)
 	sem := make(chan struct{}, c.Concurrency)
 	var wg sync.WaitGroup
 	var firstErr error
@@ -67,7 +69,15 @@ func (c *Copier) Run(ctx context.Context) error {
 			return fmt.Errorf("list secrets: %w", err)
 		}
 		for _, item := range page.Value {
-			name := *item.ID.Name
+			if item.ID == nil {
+				continue
+			}
+			id := string(*item.ID)
+			name, err := extractName(id)
+			if err != nil {
+				recordErr(&mu, &firstErr, fmt.Errorf("parse id: %w", err))
+				continue
+			}
 			if !allow(name, inc, exc) {
 				continue
 			}
@@ -77,7 +87,6 @@ func (c *Copier) Run(ctx context.Context) error {
 			go func(name string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-
 				if c.LatestOnly {
 					copyLatest(ctx, c, srcClient, tgtClients, name, &mu, &firstErr)
 					return
@@ -91,13 +100,13 @@ func (c *Copier) Run(ctx context.Context) error {
 }
 
 func copyLatest(ctx context.Context, c *Copier, src *azsecrets.Client, targets map[string]*azsecrets.Client, name string, mu *sync.Mutex, firstErr *error) {
-	ver, err := src.GetSecret(ctx, name, "", nil) // latest
+	ver, err := src.GetSecret(ctx, name, "", nil)
 	if err != nil {
 		recordErr(mu, firstErr, fmt.Errorf("get %s: %w", name, err))
 		return
 	}
 
-	if ver.Properties.Enabled != nil && !*ver.Properties.Enabled && !c.OverrideDisabled {
+	if ver.Attributes != nil && ver.Attributes.Enabled != nil && !*ver.Attributes.Enabled && !c.OverrideDisabled {
 		return
 	}
 
@@ -106,14 +115,15 @@ func copyLatest(ctx context.Context, c *Copier, src *azsecrets.Client, targets m
 			c.Logger.Printf("DRY-RUN copy %s -> %s", name, tName)
 			continue
 		}
-		if err := kv.CopySecret(ctx, tClient, name, *ver.Value, ver.Properties.ContentType, ver.Properties.Enabled, toKVTags(ver.Properties.Tags)); err != nil {
+		tags := toKVTags(ver.Tags)
+		if err := kv.CopySecret(ctx, tClient, name, *ver.Value, ver.ContentType, getEnabledFromAttributes(ver.Attributes), tags); err != nil {
 			recordErr(mu, firstErr, fmt.Errorf("set %s in %s: %w", name, tName, err))
 		}
 	}
 }
 
-func copyAllVersions(ctx context.Context, c *Copier, src *azsecrets.Client, targets map[string]*azsecrets.Client, name string, mu *sync.Mutex, firstErr *error) {
-	pager := src.NewListSecretVersionsPager(name, nil)
+func copyAllVersions(ctx context.Context, c *Copier, srcClient *azsecrets.Client, targets map[string]*azsecrets.Client, name string, mu *sync.Mutex, firstErr *error) {
+	pager := srcClient.NewListSecretPropertiesVersionsPager(name, nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -121,25 +131,67 @@ func copyAllVersions(ctx context.Context, c *Copier, src *azsecrets.Client, targ
 			return
 		}
 		for _, v := range page.Value {
-			ver, err := src.GetSecret(ctx, name, *v.ID.Version, nil)
-			if err != nil {
-				recordErr(mu, firstErr, fmt.Errorf("get %s/%s: %w", name, *v.ID.Version, err))
+			if v.ID == nil {
 				continue
 			}
-			if ver.Properties.Enabled != nil && !*ver.Properties.Enabled && !c.OverrideDisabled {
+			versionID := string(*v.ID)
+			version, err := extractVersion(versionID)
+			if err != nil {
+				recordErr(mu, firstErr, fmt.Errorf("parse version: %w", err))
+				continue
+			}
+
+			ver, err := srcClient.GetSecret(ctx, name, version, nil)
+			if err != nil {
+				recordErr(mu, firstErr, fmt.Errorf("get %s/%s: %w", name, version, err))
+				continue
+			}
+			if ver.Attributes != nil && ver.Attributes.Enabled != nil && !*ver.Attributes.Enabled && !c.OverrideDisabled {
 				continue
 			}
 			for tName, tClient := range targets {
 				if c.DryRun {
-					c.Logger.Printf("DRY-RUN copy %s@%s -> %s", name, *v.ID.Version, tName)
+					c.Logger.Printf("DRY-RUN copy %s@%s -> %s", name, version, tName)
 					continue
 				}
-				if err := kv.CopySecret(ctx, tClient, name, *ver.Value, ver.Properties.ContentType, ver.Properties.Enabled, toKVTags(ver.Properties.Tags)); err != nil {
-					recordErr(mu, firstErr, fmt.Errorf("set %s@%s in %s: %w", name, *v.ID.Version, tName, err))
+				tags := toKVTags(ver.Tags)
+				if err := kv.CopySecret(ctx, tClient, name, *ver.Value, ver.ContentType, getEnabledFromAttributes(ver.Attributes), tags); err != nil {
+					recordErr(mu, firstErr, fmt.Errorf("set %s@%s in %s: %w", name, version, tName, err))
 				}
 			}
 		}
 	}
+}
+
+func getEnabledFromAttributes(attrs *azsecrets.SecretAttributes) *bool {
+	if attrs == nil {
+		return nil
+	}
+	return attrs.Enabled
+}
+
+func extractName(id string) (string, error) {
+	u, err := url.Parse(id)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] != "secrets" {
+		return "", fmt.Errorf("unexpected secret ID format: %s", id)
+	}
+	return parts[1], nil
+}
+
+func extractVersion(id string) (string, error) {
+	u, err := url.Parse(id)
+	if err != nil {
+		return "", err
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "secrets" {
+		return "", fmt.Errorf("unexpected secret version ID format: %s", id)
+	}
+	return parts[2], nil
 }
 
 func recordErr(mu *sync.Mutex, firstErr *error, err error) {
@@ -152,7 +204,7 @@ func recordErr(mu *sync.Mutex, firstErr *error, err error) {
 
 func splitList(s string) []string {
 	var out []string
-	for _, p := range filepath.SplitList(strings.ReplaceAll(s, ",", string(filepath.ListSeparator))) {
+	for _, p := range strings.Split(s, ",") {
 		p = strings.TrimSpace(p)
 		if p != "" {
 			out = append(out, p)
@@ -183,7 +235,7 @@ func allow(name string, include, exclude []string) bool {
 }
 
 func match(glob, s string) bool {
-	ok, err := filepath.Match(glob, s)
+	ok, err := path.Match(glob, s)
 	return err == nil && ok
 }
 

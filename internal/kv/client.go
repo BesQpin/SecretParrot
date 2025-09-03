@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 )
@@ -14,7 +15,7 @@ func VaultURL(name string) string {
 	return fmt.Sprintf("https://%s.vault.azure.net/", name)
 }
 
-func NewSecretsClient(vaultName string, cred azsecrets.TokenCredential) (*azsecrets.Client, error) {
+func NewSecretsClient(vaultName string, cred azcore.TokenCredential) (*azsecrets.Client, error) {
 	return azsecrets.NewClient(VaultURL(vaultName), cred, nil)
 }
 
@@ -31,8 +32,10 @@ func CopySecret(ctx context.Context, target *azsecrets.Client, name string, valu
 	_, err := target.SetSecret(ctx, name, azsecrets.SetSecretParameters{
 		Value:       to.Ptr(value),
 		ContentType: contentType,
-		Enabled:     enabled,
 		Tags:        kvTags,
+		SecretAttributes: &azsecrets.SecretAttributes{
+			Enabled: enabled,
+		},
 	}, nil)
 	return err
 }
