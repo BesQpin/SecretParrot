@@ -1,64 +1,103 @@
 # Secret Parrot
 
-Copy secrets from one Key Vault to many.
+**Secret Parrot** is a Go application that copies secrets from one Azure Key Vault to multiple target Key Vaults.  
+It supports managed identity authentication and is designed to run in Kubernetes or any containerized environment.
 
-## Build
+## Features
+
+- Copy secrets from a source Key Vault to multiple targets
+- Optionally copy only the latest version of each secret
+- Include/exclude specific secrets via glob patterns
+- Dry-run mode for testing
+- Concurrent copying with configurable concurrency
+- Support for managed identities
+
+## Installation
+
+### Build locally
 
 ```bash
-go build ./cmd/secret-parrot
-````
+git clone https://github.com/your-org/secret-parrot.git
+cd secret-parrot
+go build -o secret-parrot ./cmd/secret-parrot
+```
 
-## Container
+### Build Docker image
 
 ```bash
-docker build -t secret-parrot:local .
+docker build -t secret-parrot:latest .
 ```
 
-## Run locally (uses DefaultAzureCredential)
+## Usage
 
 ```bash
-export SOURCE_VAULT=src-vault
-export TARGET_VAULTS=dst-a,dst-b
-./secret-parrot --include="app-*" --concurrency=16 --latest-only=true
+./secret-parrot \
+  --source-vault <source-vault-name> \
+  --target-vaults <comma-separated-target-vaults> \
+  [--include <glob>] \
+  [--exclude <glob>] \
+  [--latest-only] \
+  [--dry-run] \
+  [--concurrency <number>]
 ```
 
-Common flags/env:
+### Flags
 
-* `SOURCE_VAULT` / `--source` – source Key Vault name
-* `TARGET_VAULTS` / `--targets` – comma-separated target Key Vault names
-* `INCLUDE_PATTERNS` / `--include` – globs to select which secret names to copy
-* `EXCLUDE_PATTERNS` / `--exclude` – globs to skip secrets
-* `DRY_RUN` / `--dry-run` – don’t write, just log
-* `CONCURRENCY` / `--concurrency` – parallel operations (default 8)
-* `LATEST_ONLY` / `--latest-only` – copy only current version (default true)
-* `OVERRIDE_DISABLED` / `--override-disabled` – copy even if source secret is disabled
+| Flag | Description |
+|------|-------------|
+| `--source-vault` | Name of the source Azure Key Vault |
+| `--target-vaults` | Comma-separated list of target Azure Key Vaults |
+| `--include` | Glob pattern of secrets to include |
+| `--exclude` | Glob pattern of secrets to exclude |
+| `--latest-only` | Copy only the latest version of each secret |
+| `--dry-run` | Print actions without modifying target Key Vaults |
+| `--concurrency` | Number of concurrent secret copy operations (default: 8) |
 
-### Notes
+## Kubernetes Deployment
 
-* Secrets’ **content type** and **tags** are preserved. Enabled/disabled state is preserved unless `--override-disabled=false` prevents it.
-* By default only the latest version is copied; use `--latest-only=false` to migrate **all versions**.
-* On targets, existing secrets will be **updated** (new version created) with the source value.
-* If a secret exists in targets but not in source (e.g., drift), Secret Parrot does not delete it.
-* Retries/backoffs rely on Azure SDK defaults; you can wrap with a controller or CronJob in K8s.
+You can containerize the app and run it in a Kubernetes cluster. Example manifest:
 
-## Kubernetes (Workload Identity)
-
-* Create a federated identity credential mapping your cluster’s issuer and the `ServiceAccount` to your managed identity.
-* Assign Key Vault roles to the managed identity as above.
-* Apply `k8s/secret-parrot-config.example.yaml` and `k8s/deployment.yaml`.
-
-````
-
----
-
-## Future enhancements (backlog)
-
-- Metrics endpoint (Prometheus) with copy counts and durations.
-- Exponential backoff/retry with per-secret error classification.
-- Partial sync (only tags/content-type update) and delete-orphans mode (opt-in).
-- Expose as HTTP service to trigger sync via webhook in addition to CLI run.
-- Per-vault concurrency limits to avoid throttling (429) on large fan-out.
-- Optional AES encryption at rest for transit artifacts (if ever added).
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secret-parrot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: secret-parrot
+  template:
+    metadata:
+      labels:
+        app: secret-parrot
+    spec:
+      containers:
+      - name: secret-parrot
+        image: secret-parrot:latest
+        args:
+        - "--source-vault"
+        - "source-vault-name"
+        - "--target-vaults"
+        - "target1,target2"
+        env:
+        - name: AZURE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: clientId
+        - name: AZURE_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: tenantId
+        - name: AZURE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: azure-credentials
+              key: clientSecret
 ```
 
-````
+## License
+
+MIT License
