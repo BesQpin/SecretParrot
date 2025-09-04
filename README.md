@@ -74,13 +74,14 @@ docker run secret-parrot:latest \
 
 | Flag | Description |
 |------|-------------|
-| `--source-vault` | Name of the source Azure Key Vault |
-| `--target-vaults` | Comma-separated list of target Azure Key Vaults |
-| `--include` | Glob pattern of secrets to include |
-| `--exclude` | Glob pattern of secrets to exclude |
-| `--latest-only` | Copy only the latest version of each secret |
-| `--dry-run` | Print actions without modifying target Key Vaults |
-| `--concurrency` | Number of concurrent secret copy operations (default: 8) |
+| `-source`             | Name of the source Azure Key Vault |
+| `-targets`            | Comma-separated list of target Azure Key Vaults |
+| `-include`            | Glob pattern of secrets to include |
+| `-exclude`            | Glob pattern of secrets to exclude |
+| `-latest-only`        | Copy only the latest version of each secret |
+| `-override-disabled`  | Copy even if source secret is disabled |
+| `-dry-run`            | Print actions without modifying target Key Vaults |
+| `-concurrency`        | Number of concurrent secret copy operations (default: 8) |
 
 ### Environment Variables
 
