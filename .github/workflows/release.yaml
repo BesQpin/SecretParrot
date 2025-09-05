@@ -83,5 +83,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner,, }}/secret-parrot:latest
-            ghcr.io/${{ github.repository_owner,, }}/secret-parrot:${{ env.VERSION }}
+            ghcr.io/${{ toLower(github.repository_owner) }}/secret-parrot:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/secret-parrot:${{ env.VERSION }}
