@@ -77,11 +77,17 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
 
+      - id: lower-repo
+        name: Repository to lowercase
+        shell: pwsh
+        run: |
+          "::set-output name=repository::$($env:GITHUB_REPOSITORY.ToLowerInvariant())"
+  
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ toLower(github.repository_owner) }}/secret-parrot:latest
-            ghcr.io/${{ toLower(github.repository_owner) }}/secret-parrot:${{ env.VERSION }}
+            ghcr.io/${{ steps.lower-repo.outputs.repository }}/secret-parrot:latest
+            ghcr.io/${{ steps.lower-repo.outputs.repository }}/secret-parrot:${{ env.VERSION }}
